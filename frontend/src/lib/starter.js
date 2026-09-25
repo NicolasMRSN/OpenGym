@@ -6,6 +6,7 @@
 // schedule points at, so a weekday never depends on the position of a routine in the array.
 // Names stay canonical English — they become ordinary user routines, which are not translated.
 import { uid } from './format.js'
+import { distributeDays } from './week-plan.js'
 
 const PPL = [
   ['push', 'Push Day', 'barbell', [['0025', 4, 8], ['0047', 3, 10], ['0426', 3, 10], ['0334', 3, 12], ['0241', 3, 12], ['0251', 3, 10]]],
@@ -32,8 +33,8 @@ const FIVE_BY_FIVE = [
   ['5x5-c', '5×5 C', 'barbell', [['0739', 5, 5], ['0047', 5, 5], ['1323', 5, 5]]]
 ]
 
-// [weekday, routineKey] — weekday is a DAYN index, so 1 is Monday. Fixed weeks only: every
-// plan repeats the same seven days, which is all the weekly plan model can represent.
+// [weekday, routineKey] — weekday is a DAYN index, so 1 is Monday. These are the plan's
+// suggested days; the chooser lets you put it on any others (buildStarterPlan's `days`).
 const PLANS = {
   ppl: { routines: PPL, schedule: [[1, 'push'], [3, 'pull'], [5, 'legs']] },
   'upper-lower': { routines: UPPER_LOWER, schedule: [[1, 'upper-a'], [2, 'lower-a'], [4, 'upper-b'], [5, 'lower-b']] },
@@ -56,12 +57,23 @@ export const starterPlanOptions = () =>
 // The weekdays a plan would claim, or null for an unknown id.
 export const starterPlanDays = id => PLANS[id]?.schedule.map(([day]) => day) ?? null
 
+// The plan's routine names, in order — what the day picker shows it will spread over your days.
+export const starterPlanRoutineNames = id => PLANS[id]?.routines.map(([, name]) => name) ?? null
+
 // Fresh routines plus the weekdays to put them on, or null for an unknown id — a caller that
 // treats null as "change nothing" can never half-apply a plan.
-export const buildStarterPlan = id => {
+//
+// `days` (optional) replaces the plan's own weekdays: its routines are spread over them in week
+// order, cycling (week-plan.js distributeDays). That is what lets two plans share one week —
+// Upper/Lower on Monday and Tuesday, Push/Pull/Legs Wednesday to Friday. An empty list adds
+// the routines and schedules nothing.
+export const buildStarterPlan = (id, { days, order } = {}) => {
   const plan = PLANS[id]
   if (!plan) return null
   const routines = build(plan.routines)
+  if (Array.isArray(days)) {
+    return { routines, schedule: distributeDays(days, routines.length, order).map(({ day, index }) => ({ day, routineId: routines[index].id })) }
+  }
   // key → the id just minted for it, so the schedule below names its routine
   const byKey = Object.fromEntries(plan.routines.map(([key], i) => [key, routines[i].id]))
   return { routines, schedule: plan.schedule.map(([day, key]) => ({ day, routineId: byKey[key] })) }

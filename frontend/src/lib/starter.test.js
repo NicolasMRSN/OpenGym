@@ -102,3 +102,25 @@ describe('starterRoutines (the demo build entry point)', () => {
     expect(new Set([...first, ...second]).size).toBe(6)
   })
 })
+
+describe('buildStarterPlan on chosen days', () => {
+  it('spreads the plan over the days picked, and matches its own schedule on its own days', () => {
+    const own = buildStarterPlan('upper-lower')
+    const picked = buildStarterPlan('upper-lower', { days: starterPlanDays('upper-lower') })
+    const names = p => p.schedule.map(({ day, routineId }) => [day, p.routines.find(r => r.id === routineId).name])
+    expect(names(picked)).toEqual(names(own))
+  })
+
+  it('puts Upper/Lower on two days and Push/Pull/Legs on three', () => {
+    const ul = buildStarterPlan('upper-lower', { days: [1, 2] })
+    const ppl = buildStarterPlan('ppl', { days: [3, 4, 5] })
+    const names = p => p.schedule.map(({ day, routineId }) => [day, p.routines.find(r => r.id === routineId).name])
+    expect(names(ul)).toEqual([[1, 'Upper A'], [2, 'Lower A']])
+    expect(names(ppl)).toEqual([[3, 'Push Day'], [4, 'Pull Day'], [5, 'Leg Day']])
+    expect(ul.routines).toHaveLength(4)          // every routine is still added
+  })
+
+  it('schedules nothing for an empty day list', () => {
+    expect(buildStarterPlan('ppl', { days: [] }).schedule).toEqual([])
+  })
+})

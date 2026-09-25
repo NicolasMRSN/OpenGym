@@ -10,7 +10,8 @@ import { toScale, rirOf, EFFORT_PRESETS, effortColor } from './lib/effort.js'
 import { beep, vibrate } from './lib/sound.js'
 import { t, dateLocale, instrFor, exerciseNameFor, getLang, INSTR_LANGS } from './lib/i18n.js'
 import { nav } from './lib/nav.js'
-import { buildStarterPlan, starterPlanDays, starterPlanOptions } from './lib/starter.js'
+import { buildStarterPlan, starterPlanDays, starterPlanOptions, starterPlanRoutineNames } from './lib/starter.js'
+import { DEFAULT_WEEK, RECOVERY_ACTIVITIES, recoveryFor, targetForDate, recoveryDoneOn, weekOf, recoveryWeekOf, templateById, setDay, addToDay, setDayRecovery, newTemplate, deleteTemplate, assignWeek, distributeDays } from './lib/week-plan.js'
 import Media, { Thumb } from './components/Media.jsx'
 import LineChart from './components/LineChart.jsx'
 import Stepper from './components/Stepper.jsx'
@@ -110,12 +111,24 @@ const PLAN_COPY = {
 // and only the weekdays the plan asks for are reassigned; an id with no plan behind it changes
 // nothing at all. planId is deliberately required — a default invites `onClick={loadStarterPlan}`,
 // which hands the click event in as the plan and silently loads nothing.
-export function loadStarterPlan(planId) {
-  const plan = buildStarterPlan(planId)
+//
+// Options, all optional:
+//   days    weekdays to spread the plan over instead of its own (see buildStarterPlan) — what
+//           lets Upper/Lower take Monday–Tuesday and Push/Pull/Legs Wednesday–Friday
+//   target  the week to write: 'default' (S.week) or a week template id (lib/week-plan.js)
+//   reuse   use a routine you already have with the same name instead of adding a copy, so
+//           loading Upper/Lower into a second week does not duplicate "Upper A"
+export function loadStarterPlan(planId, { days, target = DEFAULT_WEEK, reuse = false } = {}) {
+  const plan = buildStarterPlan(planId, { days, order: weekOrder(weekStartOf(useStore.getState().S)) })
   if (!plan) return false
   update(st => {
-    st.routines.push(...plan.routines)
-    plan.schedule.forEach(({ day, routineId }) => { st.week[day] = [routineId] })
+    const idFor = {}
+    plan.routines.forEach(r => {
+      const same = reuse && st.routines.find(x => x.name === r.name)
+      if (same) idFor[r.id] = same.id
+      else { st.routines.push(r); idFor[r.id] = r.id }
+    })
+    plan.schedule.forEach(({ day, routineId }) => setDay(st, target, day, idFor[routineId]))
   })
   toast(t('{0} loaded', PLAN_COPY[planId]().name))
   return true
@@ -124,29 +137,15 @@ export function loadStarterPlan(planId) {
 // Intl joins the days the way each language does it — "and" vs "und", "、" in Chinese.
 const dayList = days => new Intl.ListFormat(dateLocale()).format(days.map(d => t(DAYN[d])))
 
-function StarterPlanChooser({ close }) {
-  const week = useStore(s => s.S.week)
-  const routines = useStore(s => s.S.routines)
-  const choose = (id, name) => {
-    const days = starterPlanDays(id)
-    close()
-    // A confirmation is only worth showing when one of those days is actually occupied — by a
-    // routine that still exists, not by a stale id the Plan already shows as "Rest".
-    const taken = day => [].concat(week[day] || []).some(id => routines.some(r => r.id === id))
-    if (!days.some(taken)) { loadStarterPlan(id); return }
-    confirmSheet({
-      title: t('Load {0}?', name),
-      message: t('The new plan will be scheduled on {0}. Existing routines are kept — only those days of the weekly plan change.', dayList(days)),
-      confirmText: t('Load plan'),
-      onConfirm: () => loadStarterPlan(id)
-    })
-  }
+// `target` is the week the Plan screen is showing (the default week or a template).
+function StarterPlanChooser({ close, target }) {
+  const choose = id => { close(); starterPlanDaysSheet(id, target) }
   return <>
     <h3>{t('Choose starter plan')}</h3>
     <div className="list">
       {starterPlanOptions().map(({ id, days }) => {
         const { name, about } = PLAN_COPY[id]()
-        return <div key={id} className="item" {...tappable(() => choose(id, name))}>
+        return <div key={id} className="item" {...tappable(() => choose(id))}>
           <span className="lrow-i" style={{ background: 'var(--surface-3)' }}><Icon name="sparkles" /></span>
           <div className="grow"><div className="tt">{name}</div><div className="ss">{t('{0} days per week', days)} · {about}</div></div>
           <Icon name="chevronRight" className="chev" />
@@ -156,7 +155,53 @@ function StarterPlanChooser({ close }) {
   </>
 }
 
-export const starterPlanSheet = () => ui().openSheet(close => <StarterPlanChooser close={close} />)
+// Step two: which weekdays the plan goes on. Starts on the plan's own days; any set works, so a
+// plan can take part of a week and leave the rest to another one. The preview names the routine
+// each day gets, and a day that already has something says it will be replaced.
+function StarterPlanDays({ planId, target = DEFAULT_WEEK, close }) {
+  const st = useStore(s => s.S)
+  const [days, setDays] = useState(() => starterPlanDays(planId) || [])
+  const names = starterPlanRoutineNames(planId) || []
+  const existing = names.filter(n => st.routines.some(r => r.name === n))
+  const [reuse, setReuse] = useState(existing.length > 0)
+  const { name } = PLAN_COPY[planId]()
+  const order = weekOrder(weekStartOf(st))
+  const week = weekOf(st, target)
+  const tpl = target !== DEFAULT_WEEK ? templateById(st, target) : null
+  const preview = distributeDays(days, names.length, order)
+  const taken = day => [].concat(week[day] || []).some(id => st.routines.some(r => r.id === id))
+  const replaced = preview.filter(({ day }) => taken(day)).map(({ day }) => day)
+  const toggle = d => setDays(cur => (cur.includes(d) ? cur.filter(x => x !== d) : [...cur, d]))
+  const apply = () => { close(); loadStarterPlan(planId, { days, target, reuse }) }
+  return <>
+    <h3>{name}</h3>
+    <div className="muted small" style={{ marginBottom: 10 }}>
+      {t('Pick the days for this plan. Its sessions are spread over them in order, so you can mix it with another plan in the same week.')}
+      {tpl && <><br />{t('Week: {0}', tpl.name || t('Untitled week'))}</>}
+    </div>
+    <div style={{ display: 'flex', flexWrap: 'wrap', gap: 6, marginBottom: 12 }}>
+      {order.map(d => <button key={d} className={'chip' + (days.includes(d) ? ' on' : '')} aria-pressed={days.includes(d)} onClick={() => toggle(d)}>{t(DAYS[d])}</button>)}
+    </div>
+    {preview.length > 0 && <div className="list" style={{ marginBottom: 12 }}>
+      {preview.map(({ day, index }) => <div key={day} className="item">
+        <div className="grow"><div className="tt">{t(DAYN[day])}</div><div className="ss">{names[index]}</div></div>
+        {taken(day) && <span className="tag">{t('replaces current')}</span>}
+      </div>)}
+    </div>}
+    {!preview.length && <div className="muted small" style={{ marginBottom: 12 }}>{t('No day picked: the routines are added without being scheduled.')}</div>}
+    {existing.length > 0 && <div className="row between" style={{ marginBottom: 12, gap: 10 }}>
+      <div className="small">{t('Reuse the routines you already have with the same name')}</div>
+      <Switch checked={reuse} onChange={setReuse} />
+    </div>}
+    {replaced.length > 0 && <div className="small" style={{ color: 'var(--orange)', marginBottom: 10 }}>{t('Days replaced: {0}', dayList(replaced))}</div>}
+    <Button variant="primary" onClick={apply}>{t('Load plan')}</Button>
+    <div style={{ height: 8 }} />
+    <Button variant="ghost" className="dim" onClick={close}>{t('Cancel')}</Button>
+  </>
+}
+export const starterPlanDaysSheet = (planId, target) => ui().openSheet(close => <StarterPlanDays planId={planId} target={target} close={close} />)
+
+export const starterPlanSheet = target => ui().openSheet(close => <StarterPlanChooser close={close} target={typeof target === 'string' ? target : DEFAULT_WEEK} />)
 
 /* ============================ weight picker (shared: body weight + goal) ============================ */
 // Fixed range, not a moving window — a window that resizes itself mid-drag (the previous
@@ -1589,21 +1634,58 @@ function PlanImport({ bundle, close }) {
   </>
 }
 
+/* ============================ recovery activities ============================ */
+// The labels are written out here, inside t(), so check-source-strings finds every one of them
+// (lib/week-plan.js only holds the keys and icons).
+const RECOVERY_LABEL = {
+  walk: () => t('Walking'),
+  swim: () => t('Swimming'),
+  bike: () => t('Easy cycling'),
+  run: () => t('Easy jog'),
+  yoga: () => t('Yoga / stretching'),
+  mobility: () => t('Mobility')
+}
+export const recoveryLabel = key => RECOVERY_LABEL[key]?.() || ''
+
+// One row of recovery choices: "None" plus every activity. `value` is a key or null.
+function RecoveryPicker({ value, onChange }) {
+  return <div style={{ display: 'flex', flexWrap: 'wrap', gap: 6 }}>
+    <button className={'chip' + (!value ? ' on' : '')} aria-pressed={!value} onClick={() => onChange(null)}>{t('None')}</button>
+    {RECOVERY_ACTIVITIES.map(a => <button key={a.key} className={'chip chip-i' + (value === a.key ? ' on' : '')} aria-pressed={value === a.key}
+      onClick={() => onChange(a.key)}><Icon name={a.icon} /> {recoveryLabel(a.key)}</button>)}
+  </div>
+}
+
+// Mark a date's recovery activity as done (or undo it). Logged apart from workouts, so it never
+// touches volume, streaks or progression — it is a record that the rest day was an active one.
+export function toggleRecoveryDone(iso, key) {
+  update(s => {
+    s.recoveryLog ||= []
+    const i = s.recoveryLog.findIndex(e => e?.d === iso)
+    if (i >= 0) s.recoveryLog.splice(i, 1)
+    else s.recoveryLog.push({ id: uid(), d: iso, type: key })
+  })
+}
+
 /* ============================ day override / assign ============================ */
 function DayOverride({ iso, close }) {
   const st = useStore(s => s.S)
   const wd = new Date(iso + 'T12:00:00').getDay()
-  const weeklyNames = [].concat(st.week[wd] || []).map(id => st.routines.find(r => r.id === id)?.name).filter(Boolean)
+  const weeklyNames = [].concat(weekOf(st, targetForDate(st, iso))[wd] || []).map(id => st.routines.find(r => r.id === id)?.name).filter(Boolean)
   const hasOvr = st.dayPlan[iso] !== undefined
   // A weekday can hold several routines; the per-date override stays single-pick, so picking
   // one here collapses a combined day to it (docs/COMBINE_ROUTINES.md §8). The check marks
   // show everything currently planned for the day.
   const effIds = effectiveRoutineIds(st, iso)
+  const rec = recoveryFor(st, iso, effIds.length === 0)
+  const done = recoveryDoneOn(st, iso)
   const set = v => {
     update(s => { if (!v) delete s.dayPlan[iso]; else s.dayPlan[iso] = v })
     close()
     toast(v === '' ? t('Back to weekly plan') : v === 'rest' ? t('{0} set to rest', fmtDate(iso)) : t('{0} planned for {1}', (st.routines.find(r => r.id === v) || {}).name, fmtDate(iso)))
   }
+  // A per-date choice: 'none' records "no recovery today" over whatever the week plans.
+  const setRec = key => update(s => { s.dayRecovery ||= {}; s.dayRecovery[iso] = key || 'none' })
   return <>
     <h3>{fmtDate(iso, true)}</h3>
     <div className="muted small" style={{ marginBottom: 12 }}>{t('Weekly plan:')} {weeklyNames.length ? deriveSessionName(weeklyNames) : t('Rest')}{hasOvr && <span style={{ color: 'var(--orange)' }}> · {t('changed for this day')}</span>}<br />{t('Sick, missed a day or want a different session? Pick what to train instead.')}</div>
@@ -1615,17 +1697,27 @@ function DayOverride({ iso, close }) {
       <div className="item" {...tappable(() => set('rest'))}><span className="lrow-i" style={{ background: 'var(--surface-3)' }}><Icon name="moon" /></span><div className="grow"><div className="tt">{t('Rest / skip this day')}</div></div>{effIds.length === 0 && <Icon name="check" className="accent" />}</div>
       {hasOvr && <div className="item" {...tappable(() => set(''))}><span className="lrow-i" style={{ background: 'var(--surface-3)' }}><Icon name="reset" /></span><div className="grow"><div className="tt">{t('Back to weekly plan')}</div></div></div>}
     </div>
+    {effIds.length === 0 && <>
+      <h4 className="sec" style={{ marginTop: 16 }}>{t('Active recovery')}</h4>
+      <RecoveryPicker value={rec} onChange={setRec} />
+      {rec && <div style={{ marginTop: 10 }}>
+        <Button size="sm" icon={done ? 'reset' : 'checkCircle'} onClick={() => toggleRecoveryDone(iso, rec)}>{done ? t('Mark as not done') : t('Mark as done')}</Button>
+      </div>}
+    </>}
   </>
 }
 export const dayOverrideSheet = iso => ui().openSheet(close => <DayOverride iso={iso} close={close} />)
 
-function DayAssign({ day, close }) {
+// `target` is the week being edited: 'default' (S.week) or a week template id.
+function DayAssign({ day, target = DEFAULT_WEEK, close }) {
   const st = useStore(s => s.S)
   // A weekday holds a routine-id list; this single-pick sheet sets an empty day to exactly one
   // routine (or rest). The inline ＋ Add routine on the Plan screen is what appends to a
   // populated day.
-  const cur = [].concat(st.week[day] || [])
-  const set = v => { update(s => { if (v) s.week[day] = [v]; else delete s.week[day] }); close() }
+  const cur = [].concat(weekOf(st, target)[day] || [])
+  const rec = recoveryWeekOf(st, target)[day] || null
+  const set = v => { update(s => setDay(s, target, day, v)); close() }
+  const setRec = key => update(s => setDayRecovery(s, target, day, key))
   return <>
     <h3>{t(DAYN[day])}</h3>
     <div className="list">
@@ -1635,16 +1727,21 @@ function DayAssign({ day, close }) {
         <div className="grow"><div className="tt">{r.name}</div><div className="ss">{exCount(r.ex.length)}</div></div>
         {cur.includes(r.id) && <Icon name="check" className="accent" />}</div>)}
     </div>
+    {!cur.length && <>
+      <h4 className="sec" style={{ marginTop: 16 }}>{t('Active recovery')}</h4>
+      <div className="muted small" style={{ marginBottom: 8 }}>{t('Something light to do on this rest day.')}</div>
+      <RecoveryPicker value={rec} onChange={setRec} />
+    </>}
   </>
 }
-export const dayAssignSheet = day => ui().openSheet(close => <DayAssign day={day} close={close} />)
+export const dayAssignSheet = (day, target) => ui().openSheet(close => <DayAssign day={day} target={target || DEFAULT_WEEK} close={close} />)
 
 // ＋ Add routine on a populated weekday: single-pick, appends to the day's list. A routine
 // already on that day is disabled; picking one closes the sheet.
-function DayAddRoutine({ day, close }) {
+function DayAddRoutine({ day, target = DEFAULT_WEEK, close }) {
   const st = useStore(s => s.S)
-  const on = new Set([].concat(st.week[day] || []))
-  const add = id => { update(s => { s.week[day] = [...[].concat(s.week[day] || []), id] }); close() }
+  const on = new Set([].concat(weekOf(st, target)[day] || []))
+  const add = id => { update(s => addToDay(s, target, day, id)); close() }
   return <>
     <h3>{t('Add routine')}</h3>
     <div className="list">
@@ -1660,7 +1757,75 @@ function DayAddRoutine({ day, close }) {
     </div>
   </>
 }
-export const dayAddRoutineSheet = day => ui().openSheet(close => <DayAddRoutine day={day} close={close} />)
+export const dayAddRoutineSheet = (day, target) => ui().openSheet(close => <DayAddRoutine day={day} target={target || DEFAULT_WEEK} close={close} />)
+
+/* ============================ week templates ============================ */
+// Create, rename or delete a week template. `id` absent → create; `copyFrom` is the target whose
+// days (and recovery days) the new template starts from — the week currently on screen.
+function WeekTemplateEdit({ id, copyFrom, onSaved, close }) {
+  const st = useStore(s => s.S)
+  const tpl = id ? templateById(st, id) : null
+  const [name, setName] = useState(tpl?.name || '')
+  const save = () => {
+    const clean = name.trim().slice(0, 60) || t('Untitled week')
+    if (tpl) update(s => { const x = s.weekTemplates.find(w => w.id === id); if (x) x.name = clean })
+    else {
+      const fresh = newTemplate(clean, copyFrom ? weekOf(st, copyFrom) : {}, copyFrom ? recoveryWeekOf(st, copyFrom) : {})
+      update(s => { (s.weekTemplates ||= []).push(fresh) })
+      onSaved && onSaved(fresh.id)
+    }
+    close()
+  }
+  const remove = () => confirmSheet({
+    title: t('Delete week template?'),
+    message: t('Weeks that follow “{0}” go back to the default week. Routines are kept.', tpl.name),
+    confirmText: t('Delete'), danger: true,
+    onConfirm: () => { update(s => deleteTemplate(s, id)); onSaved && onSaved(DEFAULT_WEEK); close() }
+  })
+  return <>
+    <h3>{tpl ? t('Rename week template') : t('New week template')}</h3>
+    {!tpl && <div className="muted small" style={{ marginBottom: 10 }}>{copyFrom ? t('Starts as a copy of the week you are looking at.') : t('Starts empty.')}</div>}
+    <TextField value={name} placeholder={t('e.g. Upper/Lower ×2')} onChange={e => setName(e.target.value)} autoFocus
+      onKeyDown={e => { if (e.key === 'Enter') save() }} aria-label={t('Name')} />
+    <div style={{ height: 12 }} />
+    <Button variant="primary" onClick={save}>{t('Save')}</Button>
+    {tpl && <><div style={{ height: 8 }} /><Button variant="danger" onClick={remove}>{t('Delete week template')}</Button></>}
+    <div style={{ height: 8 }} />
+    <Button variant="ghost" className="dim" onClick={close}>{t('Cancel')}</Button>
+  </>
+}
+export const weekTemplateSheet = (opts = {}) => ui().openSheet(close => <WeekTemplateEdit {...opts} close={close} />)
+
+// Pick which week a calendar week follows: the default one or any template.
+function WeekAssign({ wk, label, close }) {
+  const st = useStore(s => s.S)
+  const cur = st.weekPlan?.[wk] && templateById(st, st.weekPlan[wk]) ? st.weekPlan[wk] : DEFAULT_WEEK
+  const pick = target => { update(s => assignWeek(s, wk, target)); close() }
+  const row = (target, title, sub, icon) => <div key={target} className="item" {...tappable(() => pick(target))}>
+    <span className="lrow-i" style={{ background: 'var(--surface-3)' }}><Icon name={icon} /></span>
+    <div className="grow"><div className="tt">{title}</div><div className="ss">{sub}</div></div>
+    {cur === target && <Icon name="check" className="accent" />}
+  </div>
+  return <>
+    <h3>{label}</h3>
+    <div className="muted small" style={{ marginBottom: 10 }}>{t('Which week should these seven days follow?')}</div>
+    <div className="list">
+      {row(DEFAULT_WEEK, t('Default week'), weekSummary(st, DEFAULT_WEEK), 'calendar')}
+      {(st.weekTemplates || []).map(tpl => row(tpl.id, tpl.name || t('Untitled week'), weekSummary(st, tpl.id), 'clipboard'))}
+    </div>
+  </>
+}
+export const weekAssignSheet = (wk, label) => ui().openSheet(close => <WeekAssign wk={wk} label={label} close={close} />)
+
+// "Mo Upper A · Tu Lower A · We Push Day" — the scheduled days of a week, in display order.
+export function weekSummary(st, target) {
+  const week = weekOf(st, target)
+  const parts = weekOrder(weekStartOf(st)).map(d => {
+    const names = [].concat(week[d] || []).map(id => st.routines.find(r => r.id === id)?.name).filter(Boolean)
+    return names.length ? t(DAYS[d]) + ' ' + names.join(' + ') : null
+  }).filter(Boolean)
+  return parts.length ? parts.join(' · ') : t('Rest all week')
+}
 
 /* ============================ workout detail ============================ */
 function WorkoutDetail({ w, close }) {

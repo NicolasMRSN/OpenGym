@@ -410,6 +410,8 @@ h4.sec{
 .wday .dot.plan{background:var(--label-3)}
 .wday .dot.ovr{background:var(--orange)}
 .wday .dot.done{background:var(--acc)}
+.wday .dot.rec{background:transparent;box-shadow:inset 0 0 0 1.2px var(--blue)}
+.wday .dot.recdone{background:var(--blue)}
 .wday:active{background:var(--surface-2)}
 .wday.today .num{
   background:var(--acc);color:var(--on-acc);font-weight:600;
@@ -485,6 +487,7 @@ h4.sec{
   letter-spacing:-.006em;transition:background var(--fast),color var(--fast);
 }
 .chip:active{background:var(--surface-2)}
+.chip.chip-i{display:inline-flex;align-items:center;gap:5px}
 .chip.on{background:var(--acc);color:var(--on-acc);font-weight:500}
 .chip.on .dim{color:color-mix(in srgb,var(--on-acc) 62%,transparent)}
 /* On a phone these rows scroll by swipe. On a pointer device lib/hchips.js lets you

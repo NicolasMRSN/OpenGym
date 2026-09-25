@@ -17,6 +17,7 @@ import { copyRoutine } from '../lib/routines.js'
 import { POLICIES_FOR, POLICY_NAME, POLICY_DESC } from '../lib/progression.js'
 import BodyMap from '../components/BodyMap.jsx'
 import { loadOfRoutine, rankOf, MUSCLE_NAME } from '../lib/muscles.js'
+import { removeRoutineEverywhere } from '../lib/week-plan.js'
 
 export const ROUTINE_LONG_PRESS_MS = 380
 export const ROUTINE_DRAG_SLOP = 8
@@ -450,12 +451,10 @@ export default function RoutineEdit() {
       onConfirm: () => {
         update(s => {
           s.routines = s.routines.filter(x => x.id !== id)
-          // A weekday holds a routine-id list: pull the deleted id from each day, drop the
-          // key when it empties (never store []). dayPlan stays scalar.
-          Object.keys(s.week).forEach(k => {
-            const next = [].concat(s.week[k]).filter(rid => rid !== id)
-            if (next.length) s.week[k] = next; else delete s.week[k]
-          })
+          // A weekday holds a routine-id list: pull the deleted id from each day of the default
+          // week and of every week template, dropping a key when it empties (never store []).
+          // dayPlan stays scalar.
+          removeRoutineEverywhere(s, id)
           Object.keys(s.dayPlan).forEach(k => { if (s.dayPlan[k] === id) delete s.dayPlan[k] })
         })
         nav('/plan')

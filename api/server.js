@@ -276,7 +276,19 @@ function effectiveRoutineId(S, iso) {
   if (ov === 'rest') return null;
   if (ov && S.routines?.some(r => r?.id === ov)) return ov;
   const wd = new Date(iso + 'T12:00:00').getDay();
-  return [].concat(S.week?.[wd] || []).find(id => S.routines?.some(r => r?.id === id)) || null;
+  return [].concat(plannedWeek(S, iso)?.[wd] || []).find(id => S.routines?.some(r => r?.id === id)) || null;
+}
+// The week a date follows: a week template when that calendar week was given one (S.weekPlan,
+// keyed by the ISO date the week starts on), else the default S.week. Mirrors
+// frontend/src/lib/week-plan.js targetForDate/weekOf, duplicated for the same reason as above.
+function plannedWeek(S, iso) {
+  const ws = S.weekStart === 0 ? 0 : 1;
+  const d = new Date(iso + 'T12:00:00');
+  d.setDate(d.getDate() - ((d.getDay() - ws + 7) % 7));
+  const key = d.getFullYear() + '-' + String(d.getMonth() + 1).padStart(2, '0') + '-' + String(d.getDate()).padStart(2, '0');
+  const id = S.weekPlan?.[key];
+  const tpl = id && Array.isArray(S.weekTemplates) ? S.weekTemplates.find(w => w?.id === id) : null;
+  return tpl ? (tpl.week || {}) : S.week;
 }
 // Computes "now" in an arbitrary IANA zone (e.g. "Europe/Lisbon") instead of the server's own —
 // each user's reminder fires by their own clock, wherever they and their phone actually are.

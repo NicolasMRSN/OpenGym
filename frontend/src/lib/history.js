@@ -16,6 +16,7 @@ const workRowsForMode = (entry = {}, mode = 'reps') => {
 // for the hook — and it re-exports this very `t` from core, so nothing changes here except what
 // gets dragged along behind it.
 import { t } from './i18n-core.js'
+import { plannedIdsFor } from './week-plan.js'
 
 // How an exercise is logged (issue #16). This used to be derived from the body part alone,
 // which meant a plank or a farmer's carry could only be timed by filing it under cardio.
@@ -314,13 +315,15 @@ export function bestWeightFor(S, exId) {
  *
  * `S.dayPlan[iso]` stays scalar (a routine id, the `'rest'` sentinel, or undefined): the
  * per-date override and Start-time are single-pick. All array-tolerance is on `S.week`.
+ * The weekly layer itself can be a week template for that calendar week (lib/week-plan.js).
  */
 export function effectiveRoutineIds(S, iso) {
   const ov = S.dayPlan[iso]
   if (ov === 'rest') return []
   if (ov && S.routines.some(r => r.id === ov)) return [ov]
-  const wd = new Date(iso + 'T12:00:00').getDay()
-  return [].concat(S.week[wd] || []).filter(id => S.routines.some(r => r.id === id))
+  // The week a date follows is the default one (`S.week`) unless that calendar week was given a
+  // template (lib/week-plan.js) — e.g. an Upper/Lower-only week between two mixed ones.
+  return plannedIdsFor(S, iso).filter(id => S.routines.some(r => r.id === id))
 }
 export function effectiveRoutines(S, iso) {
   return effectiveRoutineIds(S, iso).map(id => S.routines.find(r => r.id === id)).filter(Boolean)

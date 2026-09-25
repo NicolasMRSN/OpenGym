@@ -4,7 +4,8 @@ import { useStore } from '../store/useStore.js'
 import { effectiveRoutines, effectiveRoutineIds, nextTrainingDay, streakWeeks, lastBW, setsDoneActive } from '../lib/history.js'
 import { fmtNum, fmtDate, todayISO, isoOf, weekKey, weekStartOf, weekDayOffset, DAYS, DAYN } from '../lib/format.js'
 import { t, dateLocale } from '../lib/i18n.js'
-import { bwSheet, goalSheet, dayOverrideSheet, calendarSheet, startFlow, starterPlanSheet, bwDeltaColor } from '../sheets.jsx'
+import { bwSheet, goalSheet, dayOverrideSheet, calendarSheet, startFlow, starterPlanSheet, bwDeltaColor, recoveryLabel, toggleRecoveryDone } from '../sheets.jsx'
+import { recoveryFor, recoveryDoneOn, recoveryActivity, weekOf, targetForDate, trainingDaysIn } from '../lib/week-plan.js'
 import LineChart from '../components/LineChart.jsx'
 import Icon from '../components/Icon.jsx'
 import { Button } from '../components/ui.jsx'
@@ -27,6 +28,9 @@ export default function Home() {
   const todayOvr = S.dayPlan[todayISO()] !== undefined
   // On a rest day, saying when you train next beats leaving the row as a full stop.
   const next = !S.active && !todayRoutines.length ? nextTrainingDay(S, todayISO()) : null
+  // A rest day can carry a recovery activity (walking, swimming…) — lib/week-plan.js.
+  const todayRec = !S.active && !todayRoutines.length ? recoveryFor(S, todayISO()) : null
+  const todayRecDone = todayRec ? recoveryDoneOn(S, todayISO()) : null
   const bw = lastBW(S)
   const prevBW = S.bodyweight.length > 1 ? S.bodyweight[S.bodyweight.length - 2] : null
   const delta = bw && prevBW ? bw.w - prevBW.w : null
@@ -45,7 +49,8 @@ export default function Home() {
     const d = new Date(wkStart); d.setDate(wkStart.getDate() + i)
     const iso = isoOf(d)
     const eff = effectiveRoutineIds(S, iso).length > 0, ovr = S.dayPlan[iso] !== undefined, done = doneDays.has(iso)
-    const dot = done ? ' done' : ovr && eff ? ' ovr' : eff ? ' plan' : ''
+    const rec = !eff && recoveryFor(S, iso)
+    const dot = done ? ' done' : ovr && eff ? ' ovr' : eff ? ' plan' : rec ? (recoveryDoneOn(S, iso) ? ' recdone' : ' rec') : ''
     strip.push(<div key={i} className={'wday' + (iso === todayISO() ? ' today' : '')} {...tappable(() => dayOverrideSheet(iso))}>
       <div className="lbl">{t(DAYS[d.getDay()])}</div><div className="num">{d.getDate()}</div><div className={'dot' + dot} /></div>)
   }
@@ -54,7 +59,8 @@ export default function Home() {
 
   const wThisWeek = S.workouts.filter(w => weekKey(w.d, ws) === weekKey(todayISO(), ws)).length
   // Days scheduled, not routines — a combined day counts as 1, matching wThisWeek (one w).
-  const plannedPerWeek = Object.values(S.week).filter(ids => ids?.length).length
+  // This week's own plan: a week template when this calendar week was given one.
+  const plannedPerWeek = trainingDaysIn(weekOf(S, targetForDate(S, todayISO())))
   const bwPoints = S.bodyweight.slice(-30).map(b => ({ t: b.t || new Date(b.d).getTime(), y: b.w, d: b.d }))
 
   // today's session shown right under the week strip
@@ -80,21 +86,24 @@ export default function Home() {
           row keeps working, so a second session in one day is a tap away, just not urged. */}
       <div className="today-row" {...tappable(onToday)}>
         <div className="row" style={{ gap: 9, minWidth: 0 }}>
-          <span className="lrow-i" style={{ background: S.active ? 'var(--orange)' : doneToday ? 'var(--surface-3)' : routine ? 'var(--acc)' : 'var(--surface-3)' }}>
-            <Icon name={S.active ? 'timer' : doneToday ? 'checkCircle' : routine ? glyphOf(routine.emoji) : 'moon'}
+          <span className="lrow-i" style={{ background: S.active ? 'var(--orange)' : doneToday ? 'var(--surface-3)' : routine ? 'var(--acc)' : todayRec ? 'var(--blue)' : 'var(--surface-3)' }}>
+            <Icon name={S.active ? 'timer' : doneToday ? 'checkCircle' : routine ? glyphOf(routine.emoji) : todayRec ? recoveryActivity(todayRec).icon : 'moon'}
               style={doneToday && !S.active ? { color: 'var(--green)' } : undefined} />
           </span>
           <div style={{ minWidth: 0 }}>
             <div className="lbl2">{t('Today')}</div>
             <div className="ttl">{S.active ? t('{0} — in progress', S.active.name)
               : doneToday ? (doneToday.name ? t('{0} — done', doneToday.name) : t('Workout done'))
-              : routine ? todayName : t('Rest day')}{todayOvr && routine && !doneToday ? ' · ' + t('rescheduled') : ''}</div>
+              : routine ? todayName : todayRec ? t('Rest day') + ' · ' + recoveryLabel(todayRec) : t('Rest day')}{todayOvr && routine && !doneToday ? ' · ' + t('rescheduled') : ''}</div>
             {next && !doneToday && <div className="ss">{t('Next session: {0}, {1}', t(DAYN[next.weekday]), next.routine.name)}</div>}
           </div>
         </div>
         {S.active ? <span className="tag" style={{ color: 'var(--orange)', background: 'color-mix(in srgb,var(--orange) 16%,transparent)' }}>{t('Resume')}</span>
           : doneToday ? <span className="tag" style={{ color: 'var(--green)', background: 'color-mix(in srgb,var(--green) 16%,transparent)' }}>{t('Done')}</span>
           : routine ? <span className="tag acc">{t('Start')}</span>
+          : todayRec ? <button className={'tag' + (todayRecDone ? '' : ' acc')} style={todayRecDone ? { color: 'var(--green)', background: 'color-mix(in srgb,var(--green) 16%,transparent)' } : undefined}
+            onClick={ev => { ev.stopPropagation(); toggleRecoveryDone(todayISO(), todayRec) }}
+            aria-pressed={!!todayRecDone}>{todayRecDone ? t('Done') : t('Mark as done')}</button>
           : <Icon name="plus" className="chev" />}
       </div>
       {/* The row above starts today's plan in one tap, and so does the Start button in the tab

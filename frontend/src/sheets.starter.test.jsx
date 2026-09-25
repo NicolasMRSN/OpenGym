@@ -57,11 +57,17 @@ describe('starter plan chooser', () => {
     expect(rowFor(host, 'Upper / Lower').querySelector('.ss').textContent).toContain('4 days per week')
   })
 
-  it('loads straight away when the plan’s weekdays are free, without asking', () => {
+  it('opens a day picker on the plan’s own days, and loads them as before', () => {
     useStore.setState(s => ({ S: { ...s.S, week: { 0: ['mine'], 6: ['mine'] } } }))
     choose('Upper / Lower')
 
-    expect(useUI.getState().sheets).toHaveLength(0)   // no confirmation was raised
+    const picker = renderTop()
+    expect(picker.querySelector('h3').textContent).toBe('Upper / Lower')
+    const on = [...picker.querySelectorAll('.chip.on')].map(b => b.textContent)
+    expect(on).toEqual(['Mo', 'Tu', 'Th', 'Fr'])
+    expect(picker.textContent).not.toContain('replaces current')   // nothing on those days
+
+    act(() => { buttonFor(picker, 'Load plan').click() })
     expect(nameOn(1)).toBe('Upper A')
     expect(nameOn(2)).toBe('Lower A')
     expect(nameOn(4)).toBe('Upper B')
@@ -72,38 +78,50 @@ describe('starter plan chooser', () => {
     expect(useUI.getState().toastMsg).toBe('Upper / Lower loaded')
   })
 
-  it('asks first when a weekday the plan wants is already taken', () => {
+  it('says which taken days a plan will replace, and changes nothing until confirmed', () => {
     useStore.setState(s => ({ S: { ...s.S, week: { 3: ['mine'] } } }))
     choose('Full Body')
 
-    const confirm = renderTop()
-    expect(confirm.querySelector('h3').textContent).toBe('Load Full Body?')
-    expect(confirm.textContent).toContain('Monday, Wednesday and Friday')
+    const picker = renderTop()
+    expect(picker.textContent).toContain('replaces current')
+    expect(picker.textContent).toContain('Days replaced: Wednesday')
     expect(S().week[3]).toEqual(['mine'])                  // nothing applied yet
     expect(S().routines).toHaveLength(1)
 
-    act(() => { buttonFor(confirm, 'Load plan').click() })
+    act(() => { buttonFor(picker, 'Load plan').click() })
     expect(nameOn(1)).toBe('Full Body A')
     expect(nameOn(3)).toBe('Full Body B')
     expect(nameOn(5)).toBe('Full Body C')
   })
 
-  it('leaves everything alone when the confirmation is cancelled', () => {
+  it('leaves everything alone when the day picker is cancelled', () => {
     useStore.setState(s => ({ S: { ...s.S, week: { 1: ['mine'] } } }))
     const before = structuredClone(S())
     choose('5×5')
 
-    const confirm = renderTop()
-    act(() => { buttonFor(confirm, 'Cancel').click() })
+    const picker = renderTop()
+    act(() => { buttonFor(picker, 'Cancel').click() })
     expect(S()).toEqual(before)
     expect(useUI.getState().toastMsg).toBe('')
   })
 
-  it('does not ask when only weekdays outside the plan are occupied', () => {
-    useStore.setState(s => ({ S: { ...s.S, week: { 2: ['mine'], 4: ['mine'] } } }))   // Tue + Thu
-    choose('5×5')                                                                // wants Mon/Wed/Fri
-    expect(useUI.getState().sheets).toHaveLength(0)
-    expect(nameOn(1)).toBe('5×5 A')
+  it('mixes two plans in one week: Upper/Lower Mon–Tue, Push/Pull/Legs Wed–Fri', () => {
+    useStore.setState(s => ({ S: { ...s.S, week: {} } }))
+    const pickDays = (plan, days) => {
+      choose(plan)
+      const picker = renderTop()
+      const chip = label => [...picker.querySelectorAll('.chip')].find(b => b.textContent === label)
+      // clear the plan's own days, then tap the ones asked for
+      ;[...picker.querySelectorAll('.chip.on')].forEach(b => act(() => { b.click() }))
+      days.forEach(d => act(() => { chip(d).click() }))
+      act(() => { buttonFor(picker, 'Load plan').click() })
+    }
+    pickDays('Upper / Lower', ['Mo', 'Tu'])
+    pickDays('Push / Pull / Legs', ['We', 'Th', 'Fr'])
+
+    expect([1, 2, 3, 4, 5].map(nameOn)).toEqual(['Upper A', 'Lower A', 'Push Day', 'Pull Day', 'Leg Day'])
+    expect(S().week[0]).toBeUndefined()
+    expect(S().week[6]).toBeUndefined()
   })
 })
 
@@ -116,6 +134,24 @@ describe('loadStarterPlan', () => {
     expect(S().routines).toHaveLength(7)
     expect(new Set([...first, ...second]).size).toBe(6)
     expect(second.some(id => first.includes(id))).toBe(false)
+  })
+
+  it('reuses routines of the same name instead of copying them when asked', () => {
+    loadStarterPlan('upper-lower', { days: [1, 2] })
+    const ids = S().routines.map(r => r.id)
+    loadStarterPlan('upper-lower', { days: [4, 5], reuse: true })
+    expect(S().routines.map(r => r.id)).toEqual(ids)          // nothing new was added
+    expect([1, 2, 4, 5].map(nameOn)).toEqual(['Upper A', 'Lower A', 'Upper A', 'Lower A'])
+  })
+
+  it('writes into a week template, leaving the default week alone', () => {
+    useStore.setState(s => ({ S: { ...s.S, week: { 1: ['mine'] }, weekTemplates: [{ id: 'light', name: 'Light', week: {}, recovery: {} }] } }))
+    loadStarterPlan('upper-lower', { days: [1, 3], target: 'light' })
+    expect(S().week).toEqual({ 1: ['mine'] })
+    const tpl = S().weekTemplates[0].week
+    const name = id => S().routines.find(r => r.id === id)?.name
+    expect(name(tpl[1][0])).toBe('Upper A')
+    expect(name(tpl[3][0])).toBe('Lower A')
   })
 
   it('refuses a plan it does not know and changes nothing', () => {

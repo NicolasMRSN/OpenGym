@@ -66,6 +66,8 @@ as a home-screen app, passkey sign-in, offline support, sync across your phone a
 - ⚖️ **Body-weight tracking** — interactive chart with a goal line you set, gains/losses colored by whether they move toward it
 - 🏋️ **Weekly plan** — a routine per weekday, over a library of **1,324 exercises** (searchable, with animated demos), browsable **by muscle** on a body map
 - ✨ **Four starter plans** — Push/Pull/Legs, Upper/Lower, Full Body, 5×5; loaded as ordinary routines you can edit, and a routine can be copied in one tap
+- 🧩 **Mix plans and vary your weeks** — put a starter plan on the days you choose (Upper/Lower Monday–Tuesday, Push/Pull/Legs Wednesday–Friday), save alternative **week templates** ("Upper/Lower ×2") and pick, week by week, which one each upcoming calendar week follows
+- 🚶 **Active recovery on rest days** — plan walking, swimming, easy cycling, an easy jog, yoga or mobility on a rest day (per weekday or per date), see it on Home and mark it done
 - 🗓️ **Reschedule any day** — sick, missed a session, or fewer gym days this week? Move a workout to another day without touching your weekly plan
 - 📅 **Your week starts where you say** — Monday or Sunday, in Settings. The weekly plan, the day strip on Home, the calendar and every "this week" total follow it, so the app reads the way the calendar on your wall does
 - 🧭 **A workout screen that gets out of the way** — one ⋯ menu per exercise (note, details, progression, bar weight, warm-up, superset, swap, move, remove), the set number as the set's own menu (drop set, rest-pause burst, remove), and a scrollable **list view** of the whole session with the header pinned. Four switches under Settings → Workout controls bring any of the old button rows back
